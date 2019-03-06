@@ -27,6 +27,125 @@ The two facts used in playbooks most often, ``ansible_distribution`` and ``ansib
 difference.  However, other facts like ``ansible_distribution_release`` and
 ``ansible_distribution_version`` may change as erroneous information gets corrected.
 
+Imports as handlers
+-------------------
+
+Beginning in version 2.8, a task cannot notify ``import_tasks`` or a static ``include`` that is specified in ``handlers``.
+
+The goal of a static import is to act as a pre-processor, where the import is replaced by the tasks defined within the imported file. When
+using an import, a task can notify any of the named tasks within the imported file, but not the name of the import itself.
+
+To achieve the results of notifying a single name but running mulitple handlers, utilize ``include_tasks``, or ``listen`` :ref:`handlers`.
+
+Jinja Undefined values
+----------------------
+
+Beginning in version 2.8, attempting to access an attribute of an Undefined value in Jinja will return another Undefined value, rather than throwing an error immediately. This means that you can now simply use
+a default with a value in a nested data structure when you don't know if the intermediate values are defined.
+
+In Ansible 2.8::
+
+    {{ foo.bar.baz | default('DEFAULT') }}
+
+In Ansible 2.7 and older::
+
+    {{ ((foo | default({})).bar | default({})).baz | default('DEFAULT') }}
+
+    or
+
+    {{ foo.bar.baz if (foo is defined and foo.bar is defined and foo.bar.baz is defined) else 'DEFAULT' }}
+
+Module option conversion to string
+----------------------------------
+
+Beginning in version 2.8, Ansible will warn if a module expects a string, but a non-string value is passed and automatically converted to a string. This highlights potential problems where, for example, a ``yes`` or ``true`` (parsed as truish boolean value) would be converted to the string ``'True'``, or where a version number ``1.10`` (parsed as float value) would be converted to ``'1.0'``. Such conversions can result in unexpected behavior depending on context.
+
+This behavior can be changed to be an error or to be ignored by setting the ``ANSIBLE_STRING_CONVERSION_ACTION`` environment variable, or by setting the ``string_conversion_action`` configuration in the ``defaults`` section of ``ansible.cfg``.
+
+
+Command line facts
+------------------
+
+``cmdline`` facts returned in system will be deprecated in favor of ``proc_cmdline``. This change handles special case where Kernel command line parameter contains multiple values with the same key.
+
+
+Python Interpreter Discovery
+============================
+
+In Ansible 2.7 and earlier, Ansible defaulted to ``usr/bin/python`` as the
+setting for ``ansible_python_interpreter``. If you ran Ansible against a system
+that installed Python with a different name or a different path, your playbooks
+would fail with ``/usr/bin/python: bad interpreter: No such file or directory``
+unless you either set ``ansible_python_interpreter`` to the correct value for
+that system or added a Python interpreter and any necessary dependencies at
+``usr/bin/python``.
+
+Starting in Ansible 2.8, Ansible searches for the correct path and executable
+name for Python on each target system, first in a lookup table of default
+Python interpreters for common distros, then in an ordered fallback list of
+possible Python interpreter names/paths.
+
+It's risky to rely on a Python interpreter set from the fallback list, because
+the interpreter may change on future runs. If an interpreter from
+higher in the fallback list gets installed (for example, as a side-effect of
+installing other packages), your original interpreter and its dependencies will
+no longer be used. For this reason, Ansible warns you when it uses a Python
+interpreter discovered from the fallback list. If you see this warning, the
+best solution is to explicitly set ``ansible_python_interpreter`` to the path
+of the correct interpreter for those target systems.
+
+You can still set ``ansible_python_interpreter`` to a specific path at any
+variable level (as a host variable, in vars files, in playbooks, etc.).
+If you prefer to use the Python interpreter discovery behavior, use
+one of the four new values for ``ansible_python_interpreter`` introduced in
+Ansible 2.8:
+
++---------------------------+-----------------------------------------------+
+| New value                 | Behavior                                      |
++===========================+===============================================+
+| | auto                    | | If a Python interpreter is discovered,      |
+| | (future default)        | | Ansible uses the discovered Python, even if |
+| |                         | | ``/usr/bin/python`` is also present. Warns  |
+| |                         | | when using the fallback list.               |
++---------------------------+-----------------------------------------------+
+| | **auto_legacy**         | | If a Python interpreter is discovered, and  |
+| | (Ansible 2.8 default)   | | ``/usr/bin/python`` is absent, Ansible      |
+| |                         | | uses the discovered Python. Warns when      |
+| |                         | | using the fallback list.                    |
+| |                         | |                                             |
+| |                         | | If a Python interpreter is discovered, and  |
+| |                         | | ``/usr/bin/python`` is present, Ansible     |
+| |                         | | uses ``/usr/bin/python`` and prints a       |
+| |                         | | deprecation warning about future default    |
+| |                         | | behavior. Warns when using the fallback     |
+| |                         | | list.                                       |
++---------------------------+-----------------------------------------------+
+| | auto_legacy_silent      | | Behaves like ``auto_legacy`` but suppresses |
+| |                         | | the deprecation and fallback-list warnings. |
++---------------------------+-----------------------------------------------+
+| | auto_silent             | | Behaves like ``auto`` but suppresses the    |
+| |                         | | fallback-list warning.                      |
++---------------------------+-----------------------------------------------+
+
+Starting with Ansible 2.12, Ansible will use the discovered Python interpreter
+by default, whether or not ``/usr/bin/python`` is also present. Until then,
+the default ``auto_legacy`` setting provides compatibility with
+previous versions of Ansible that always defaulted to ``/usr/bin/python``.
+
+If you installed Python and dependencies (``boto``, etc.) to
+``/usr/bin/python`` as a workaround on distros with a different default Python
+interpreter (for example, Ubuntu 16.04+, RHEL8, Fedora 23+), you have two
+options:
+
+  #. Move existing dependencies over to the default Python for each platform/distribution/version.
+  #. Use ``auto_legacy``. This setting lets Ansible find and use the workaround Python on hosts that have it, while also finding the correct default Python on newer hosts. But remember, the default will change in 4 releases.
+
+
+Retry File Creation default
+---------------------------
+
+In Ansible 2.8, ``retry_files_enabled`` now defaults to ``False`` instead of ``True``.  The behavior can be
+modified to previous version by editing the default ``ansible.cfg`` file and setting the value to ``True``.
 
 Command Line
 ============
@@ -85,6 +204,11 @@ add ``$ErrorActionPreference = "Continue"`` to the top of the module. This chang
 of the EAP that was accidentally removed in a previous release and ensure that modules are more resiliant to errors
 that may occur in execution.
 
+PowerShell module options and option choices are currently case insensitive to what is defined in the module
+specification. This behaviour is deprecated and a warning displayed to the user if a case insensitive match was found.
+A future release of Ansible will make these checks case sensitive.
+
+The ``win_dsc`` module will now validate the input options for a DSC resource. In previous versions invalid options would be ignored but are now not.
 
 Modules removed
 ---------------
@@ -105,6 +229,9 @@ The following modules will be removed in Ansible 2.12. Please update your playbo
 * ``foreman`` use <https://github.com/theforeman/foreman-ansible-modules> instead.
 * ``katello`` use <https://github.com/theforeman/foreman-ansible-modules> instead.
 * ``github_hooks`` use :ref:`github_webhook <github_webhook_module>` and :ref:`github_webhook_facts <github_webhook_facts_module>` instead.
+* ``digital_ocean`` use :ref `digital_ocean_droplet <digital_ocean_droplet_module>` instead.
+* ``gce`` use :ref `gce_compute_instance <gce_compute_instance_module>` instead.
+* ``panos`` use `Ansible Galaxy role <https://galaxy.ansible.com/PaloAltoNetworks/paloaltonetworks>`_ instead.
 
 
 Noteworthy module changes
@@ -147,8 +274,43 @@ Noteworthy module changes
   remove that workaround. To get the previous behavior when applying ``state: absent`` to a builtin kernel module,
   use ``failed_when: false`` or ``ignore_errors: true`` in your playbook.
 
+* The ``digital_ocean`` module has been deprecated in favor of modules that do not require external dependencies.
+  This allows for more flexibility and better module support.
+
+* The ``docker_container`` module has deprecated the returned fact ``docker_container``. The same value is
+  available as the returned variable ``container``. The returned fact will be removed in Ansible 2.12.
+* The ``docker_network`` module has deprecated the returned fact ``docker_container``. The same value is
+  available as the returned variable ``network``. The returned fact will be removed in Ansible 2.12.
+* The ``docker_volume`` module has deprecated the returned fact ``docker_container``. The same value is
+  available as the returned variable ``volume``. The returned fact will be removed in Ansible 2.12.
+
+* The ``docker_service`` module was renamed to :ref:`docker_compose <docker_compose_module>`.
+* The renamed ``docker_compose`` module used to return one fact per service, named same as the service. A dictionary
+  of these facts is returned as the regular return value ``service_facts``. The returned facts will be removed in
+  Ansible 2.12.
+
+* The ``docker_swarm_service`` module no longer sets a defaults for the following options:
+    * ``user``. Before, the default was ``root``.
+    * ``update_delay``. Before, the default was ``10``.
+    * ``update_parallelism``. Before, the default was ``1``.
+
+* ``vmware_vm_facts`` used to return dict of dict with virtual machine's facts. Ansible 2.8 and onwards will return list of dict with virtual machine's facts.
+  Please see module ``vmware_vm_facts`` documentation for example.
+
+* The ``panos`` modules have been deprecated in favor of using the Palo Alto Networks `Ansible Galaxy role
+  <https://galaxy.ansible.com/PaloAltoNetworks/paloaltonetworks>`_.  Contributions to the role can be made
+  `here <https://github.com/PaloAltoNetworks/ansible-pan>`_.
+
+
 Plugins
 =======
+
+* Connection plugins have been standardized to allow use of ``ansible_<conn-type>_user``
+  and ``ansible_<conn-type>_password`` variables.  Variables such as
+  ``ansible_<conn-type>_pass`` and ``ansible_<conn-type>_username`` are treated
+  with lower priority than the standardized names and may be deprecated in the
+  future.  In general, the ``ansible_user`` and ``ansible_password`` vars should
+  be used unless there is a reason to use the connection-specific variables.
 
 * The ``powershell`` shell plugin now uses ``async_dir`` to define the async path for the results file and the default
   has changed to ``%USERPROFILE%\.ansible_async``. To control this path now, either set the ``ansible_async_dir``
@@ -170,6 +332,9 @@ Plugins
   ``CLIARGS.get('tags')`` and ``CLIARGS['tags']`` work as expected but you won't be able to modify
   the cli arguments at all.
 
+* Play recap now counts ``ignored`` and ``rescued`` tasks as well as ``ok``, ``changed``, ``unreachable``, ``failed`` and ``skipped`` tasks, thanks to two additional stat counters in the ``default`` callback plugin. Tasks that fail and have ``ignore_errors: yes`` set are listed as ``ignored``. Tasks that fail and then execute a rescue section are listed as ``rescued``. Note that ``rescued`` tasks are no longer counted as ``failed`` as in Ansible 2.7 (and earlier).
+
+* ``osx_say`` callback plugin was renamed into :ref:`say <say_callback>`.
 
 Porting custom scripts
 ======================
@@ -178,7 +343,7 @@ Display class
 -------------
 
 As of Ansible 2.8, the ``Display`` class is now a "singleton". Instead of using ``__main__.display`` each file should
-import and instantiate ``ansible.utils.display.Display`` on it's own.
+import and instantiate ``ansible.utils.display.Display`` on its own.
 
 **OLD** In Ansible 2.7 (and earlier) the following was used to access the ``display`` object:
 
@@ -200,4 +365,9 @@ import and instantiate ``ansible.utils.display.Display`` on it's own.
 Networking
 ==========
 
-No notable changes.
+* The ``eos_config``, ``ios_config``, and ``nxos_config`` modules have removed the deprecated
+  ``save`` and ``force`` parameters, use the ``save_when`` parameter to replicate their
+  functionality.
+
+* The ``nxos_vrf_af`` module has removed the ``safi`` paramter. This parameter was deprecated
+  in Ansible 2.4 and has had no impact on the module since then.

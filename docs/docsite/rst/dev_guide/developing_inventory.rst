@@ -50,7 +50,7 @@ Here are some plugins and the type of source they use:
 Inventory plugins
 =================
 
-Like most plugin types (except modules) they must be developed in Python, since they execute on the controller they should match the same requirements :ref:`control_machine_requirements`.
+Like most plugin types (except modules) they must be developed in Python, since they execute on the controller they should match the same requirements :ref:`control_node_requirements`.
 
 Most of the documentation in :ref:`developing_plugins` also applies here, so as to not repeat ourselves, you should read that document first and we'll include inventory plugin specifics next.
 
@@ -185,7 +185,7 @@ To facilitate this there are a few of helper functions used in the example below
             for colo in mydata:
                 for server in mydata[colo]['servers']:
                     self.inventory.add_host(server['name'])
-                    self.inventory.set_variable('ansible_host', server['external_ip'])
+                    self.inventory.set_variable(server['name'], 'ansible_host', server['external_ip'])
 
 The specifics will vary depending on API and structure returned. But one thing to keep in mind, if the inventory source or any other issue crops up you should ``raise AnsibleParserError`` to let Ansible know that the source was invalid or the process failed.
 
@@ -198,7 +198,7 @@ Inventory source common format
 ------------------------------
 
 To simplify development, most plugins use a mostly standard configuration file as the inventory source, YAML based and with just one required field ``plugin`` which should contain the name of the plugin that is expected to consume the file.
-Depending on other common features used, other fields might be needed, but each plugin can also add it's own custom options as needed.
+Depending on other common features used, other fields might be needed, but each plugin can also add its own custom options as needed.
 For example, if you use the integrated caching, ``cache_plugin``, ``cache_timeout`` and other cache related fields could be present.
 
 .. _inventory_development_auto:
@@ -318,19 +318,24 @@ If you intend to replace an existing static inventory file with an inventory scr
 it must return a JSON object which contains an 'all' group that includes every
 host in the inventory as a member and every group in the inventory as a child.
 It should also include an 'ungrouped' group which contains all hosts which are not members of any other group.
-A skeleton example of this JSON object is::
+A skeleton example of this JSON object is:
 
-	{
-		"_meta": {
-			"hostvars": {}
-		},
-		"all": {
-			"children": [
-				"ungrouped"
-			]
-		},
-		"ungrouped": {}
-	}
+.. code-block:: json
+
+   {
+       "_meta": {
+         "hostvars": {}
+       },
+       "all": {
+         "children": [
+           "ungrouped"
+         ]
+       },
+       "ungrouped": {
+         "children": [
+         ]
+       }
+   }
 
 An easy way to see how this should look is using :ref:`ansible-inventory`, which also supports ``--list`` and ``--host`` parameters like an inventory script would.
 

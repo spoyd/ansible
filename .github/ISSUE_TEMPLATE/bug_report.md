@@ -1,6 +1,7 @@
 ---
 name: 🐛 Bug report
 about: Create a report to help us improve
+labels: bug
 ---
 <!--- Verify first that your issue is not already reported on GitHub -->
 <!--- Also test if the latest release and devel branch are affected too -->
@@ -29,6 +30,7 @@ about: Create a report to help us improve
 
 ##### OS / ENVIRONMENT
 <!--- Provide all relevant information below, e.g. target OS versions, network device firmware, etc. -->
+
 
 ##### STEPS TO REPRODUCE
 <!--- Describe exactly how to reproduce the problem, using a minimal test-case -->

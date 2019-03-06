@@ -34,6 +34,7 @@
 import time
 import socket
 import re
+import json
 try:
     from ansible.module_utils.network.cnos import cnos_errorcodes
     from ansible.module_utils.network.cnos import cnos_devicerules
@@ -42,7 +43,7 @@ except Exception:
     HAS_LIB = False
 from distutils.cmd import Command
 from ansible.module_utils._text import to_text
-from ansible.module_utils.basic import env_fallback, return_values
+from ansible.module_utils.basic import env_fallback
 from ansible.module_utils.network.common.utils import to_list, EntityCollection
 from ansible.module_utils.connection import Connection, exec_command
 from ansible.module_utils.connection import ConnectionError
@@ -192,11 +193,23 @@ def run_cnos_commands(module, commands, check_rc=True):
     return str(retVal)
 
 
+def get_capabilities(module):
+    if hasattr(module, '_cnos_capabilities'):
+        return module._cnos_capabilities
+    try:
+        capabilities = Connection(module._socket_path).get_capabilities()
+    except ConnectionError as exc:
+        module.fail_json(msg=to_text(exc, errors='surrogate_then_replace'))
+    module._cnos_capabilities = json.loads(capabilities)
+    return module._cnos_capabilities
+
+
 def load_config(module, config):
     try:
         conn = get_connection(module)
         conn.get('enable')
-        conn.edit_config(config)
+        resp = conn.edit_config(config)
+        return resp.get('response')
     except ConnectionError as exc:
         module.fail_json(msg=to_text(exc))
 
@@ -287,9 +300,9 @@ def waitForDeviceResponse(command, prompt, timeout, obj):
         except Exception:
             # debugOutput(prompt)
             if prompt == "(yes/no)?":
-                retVal = retVal
+                pass
             elif prompt == "Password:":
-                retVal = retVal
+                pass
             else:
                 retVal = retVal + "\n Error-101"
             flag = True

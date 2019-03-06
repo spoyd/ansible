@@ -133,10 +133,14 @@ class RedfishUtils(object):
             if response['ret'] is False:
                 return response
             data = response['data']
-            for member in data[u'Members']:
-                systems_service = member[u'@odata.id']
-            self.systems_uri = systems_service
-            return {'ret': True}
+            if data.get(u'Members'):
+                for member in data[u'Members']:
+                    systems_service = member[u'@odata.id']
+                    self.systems_uri = systems_service
+                    return {'ret': True}
+            else:
+                return {'ret': False,
+                        'msg': "ComputerSystem's Members array is either empty or missing"}
 
     def _find_updateservice_resource(self, uri):
         response = self.get_request(self.root_uri + uri)
@@ -276,7 +280,10 @@ class RedfishUtils(object):
         controller_list = []
         controller_results = []
         # Get these entries, but does not fail if not found
-        properties = ['Name', 'Status']
+        properties = ['CacheSummary', 'FirmwareVersion', 'Identifiers',
+                      'Location', 'Manufacturer', 'Model', 'Name',
+                      'PartNumber', 'SerialNumber', 'SpeedGbps', 'Status']
+        key = "StorageControllers"
 
         # Find Storage service
         response = self.get_request(self.root_uri + self.systems_uri)
@@ -284,41 +291,45 @@ class RedfishUtils(object):
             return response
         data = response['data']
 
-        if 'SimpleStorage' not in data:
-            return {'ret': False, 'msg': "SimpleStorage resource not found"}
+        if 'Storage' not in data:
+            return {'ret': False, 'msg': "Storage resource not found"}
 
         # Get a list of all storage controllers and build respective URIs
-        storage_uri = data["SimpleStorage"]["@odata.id"]
+        storage_uri = data['Storage']["@odata.id"]
         response = self.get_request(self.root_uri + storage_uri)
         if response['ret'] is False:
             return response
         result['ret'] = True
         data = response['data']
 
-        for controller in data[u'Members']:
-            controller_list.append(controller[u'@odata.id'])
+        # Loop through Members and their StorageControllers
+        # and gather properties from each StorageController
+        if data[u'Members']:
+            for storage_member in data[u'Members']:
+                storage_member_uri = storage_member[u'@odata.id']
+                response = self.get_request(self.root_uri + storage_member_uri)
+                data = response['data']
 
-        for c in controller_list:
-            controller = {}
-            uri = self.root_uri + c
-            response = self.get_request(uri)
-            if response['ret'] is False:
-                return response
-            data = response['data']
-
-            for property in properties:
-                if property in data:
-                    controller[property] = data[property]
-            controller_results.append(controller)
-        result["entries"] = controller_results
-        return result
+                if key in data:
+                    controller_list = data[key]
+                    for controller in controller_list:
+                        controller_result = {}
+                        for property in properties:
+                            if property in controller:
+                                controller_result[property] = controller[property]
+                        controller_results.append(controller_result)
+                result['entries'] = controller_results
+            return result
+        else:
+            return {'ret': False, 'msg': "Storage resource not found"}
 
     def get_disk_inventory(self):
         result = {}
         controller_list = []
         disk_results = []
         # Get these entries, but does not fail if not found
-        properties = ['Name', 'Manufacturer', 'Model', 'Status', 'CapacityBytes']
+        properties = ['Name', 'Manufacturer', 'Model', 'Status',
+                      'CapacityBytes']
 
         # Find Storage service
         response = self.get_request(self.root_uri + self.systems_uri)
@@ -502,45 +513,29 @@ class RedfishUtils(object):
 
     def get_firmware_inventory(self):
         result = {}
-        firmware = {}
         response = self.get_request(self.root_uri + self.firmware_uri)
         if response['ret'] is False:
             return response
         result['ret'] = True
         data = response['data']
 
+        result['entries'] = []
         for device in data[u'Members']:
-            d = device[u'@odata.id']
-            d = d.replace(self.firmware_uri, "")    # leave just device name
-            if "Installed" in d:
-                uri = self.root_uri + self.firmware_uri + d
-                # Get details for each device that is relevant
-                response = self.get_request(uri)
-                if response['ret'] is False:
-                    return response
-                result['ret'] = True
-                data = response['data']
-                firmware[data[u'Name']] = data[u'Version']
-        result["entries"] = firmware
-        return result
-
-    def get_manager_attributes(self):
-        result = {}
-        manager_attributes = {}
-        key = "Attributes"
-
-        response = self.get_request(self.root_uri + self.manager_uri + "/" + key)
-        if response['ret'] is False:
-            return response
-        result['ret'] = True
-        data = response['data']
-
-        if key not in data:
-            return {'ret': False, 'msg': "Key %s not found" % key}
-
-        for attribute in data[key].items():
-            manager_attributes[attribute[0]] = attribute[1]
-        result["entries"] = manager_attributes
+            uri = self.root_uri + device[u'@odata.id']
+            # Get details for each device
+            response = self.get_request(uri)
+            if response['ret'] is False:
+                return response
+            result['ret'] = True
+            data = response['data']
+            firmware = {}
+            # Get these standard properties if present
+            for key in ['Name', 'Id', 'Status', 'Version', 'Updateable',
+                        'SoftwareId', 'LowestSupportedVersion', 'Manufacturer',
+                        'ReleaseDate']:
+                if key in data:
+                    firmware[key] = data.get(key)
+            result['entries'].append(firmware)
         return result
 
     def get_bios_attributes(self):
@@ -570,52 +565,73 @@ class RedfishUtils(object):
         result["entries"] = bios_attributes
         return result
 
-    def get_bios_boot_order(self):
+    def get_boot_order(self):
         result = {}
-        boot_device_list = []
-        boot_device_details = []
-        key = "Bios"
-        bootsources = "BootSources"
-        # Get these entries, but does not fail if not found
-        properties = ['Index', 'Id', 'Name', 'Enabled']
+        # Get these entries from BootOption, if present
+        properties = ['DisplayName', 'BootOptionReference']
 
-        # Search for 'key' entry and extract URI from it
+        # Retrieve System resource
         response = self.get_request(self.root_uri + self.systems_uri)
         if response['ret'] is False:
             return response
         result['ret'] = True
         data = response['data']
 
-        if key not in data:
-            return {'ret': False, 'msg': "Key %s not found" % key}
+        # Confirm needed Boot properties are present
+        if 'Boot' not in data or 'BootOrder' not in data['Boot']:
+            return {'ret': False, 'msg': "Key BootOrder not found"}
 
-        bios_uri = data[key]["@odata.id"]
+        boot = data['Boot']
+        boot_order = boot['BootOrder']
 
-        # Get boot mode first as it will determine what attribute to read
-        response = self.get_request(self.root_uri + bios_uri)
-        if response['ret'] is False:
-            return response
-        data = response['data']
-        boot_mode = data[u'Attributes']["BootMode"]
-        if boot_mode == "Uefi":
-            boot_seq = "UefiBootSeq"
+        # Retrieve BootOptions if present
+        if 'BootOptions' in boot and '@odata.id' in boot['BootOptions']:
+            boot_options_uri = boot['BootOptions']["@odata.id"]
+            # Get BootOptions resource
+            response = self.get_request(self.root_uri + boot_options_uri)
+            if response['ret'] is False:
+                return response
+            data = response['data']
+
+            # Retrieve Members array
+            if 'Members' not in data:
+                return {'ret': False,
+                        'msg': "Members not found in BootOptionsCollection"}
+            members = data['Members']
         else:
-            boot_seq = "BootSeq"
+            members = []
 
-        response = self.get_request(self.root_uri + self.systems_uri + "/" + bootsources)
-        if response['ret'] is False:
-            return response
-        result['ret'] = True
-        data = response['data']
+        # Build dict of BootOptions keyed by BootOptionReference
+        boot_options_dict = {}
+        for member in members:
+            if '@odata.id' not in member:
+                return {'ret': False,
+                        'msg': "@odata.id not found in BootOptions"}
+            boot_option_uri = member['@odata.id']
+            response = self.get_request(self.root_uri + boot_option_uri)
+            if response['ret'] is False:
+                return response
+            data = response['data']
+            if 'BootOptionReference' not in data:
+                return {'ret': False,
+                        'msg': "BootOptionReference not found in BootOption"}
+            boot_option_ref = data['BootOptionReference']
 
-        boot_device_list = data[u'Attributes'][boot_seq]
-        for b in boot_device_list:
-            boot_device = {}
-            for property in properties:
-                if property in b:
-                    boot_device[property] = b[property]
-            boot_device_details.append(boot_device)
-        result["entries"] = boot_device_details
+            # fetch the props to display for this boot device
+            boot_props = {}
+            for prop in properties:
+                if prop in data:
+                    boot_props[prop] = data[prop]
+
+            boot_options_dict[boot_option_ref] = boot_props
+
+        # Build boot device list
+        boot_device_list = []
+        for ref in boot_order:
+            boot_device_list.append(
+                boot_options_dict.get(ref, {'BootOptionReference': ref}))
+
+        result["entries"] = boot_device_list
         return result
 
     def set_bios_default_settings(self):
@@ -679,44 +695,6 @@ class RedfishUtils(object):
             return response
         return {'ret': True}
 
-    def set_manager_attributes(self, attr):
-        result = {}
-        # Here I'm making the assumption that the key 'Attributes' is part of the URI.
-        # It may not, but in the hardware I tested with, getting to the final URI where
-        # the Manager Attributes are, appear to be part of a specific OEM extension.
-        key = "Attributes"
-
-        # Search for key entry and extract URI from it
-        response = self.get_request(self.root_uri + self.manager_uri + "/" + key)
-        if response['ret'] is False:
-            return response
-        result['ret'] = True
-        data = response['data']
-
-        if key not in data:
-            return {'ret': False, 'msg': "Key %s not found" % key}
-
-        # Check if attribute exists
-        if attr['mgr_attr_name'] not in data[key]:
-            return {'ret': False, 'msg': "Manager attribute %s not found" % attr['mgr_attr_name']}
-
-        # Example: manager_attr = {\"name\":\"value\"}
-        # Check if value is a number. If so, convert to int.
-        if attr['mgr_attr_value'].isdigit():
-            manager_attr = "{\"%s\": %i}" % (attr['mgr_attr_name'], int(attr['mgr_attr_value']))
-        else:
-            manager_attr = "{\"%s\": \"%s\"}" % (attr['mgr_attr_name'], attr['mgr_attr_value'])
-
-        # Find out if value is already set to what we want. If yes, return
-        if data[key][attr['mgr_attr_name']] == attr['mgr_attr_value']:
-            return {'ret': True, 'changed': False, 'msg': "Manager attribute already set"}
-
-        payload = {"Attributes": json.loads(manager_attr)}
-        response = self.patch_request(self.root_uri + self.manager_uri + "/" + key, payload, HEADERS)
-        if response['ret'] is False:
-            return response
-        return {'ret': True, 'changed': True, 'msg': "Modified Manager attribute %s" % attr['mgr_attr_name']}
-
     def set_bios_attributes(self, attr):
         result = {}
         key = "Bios"
@@ -763,11 +741,10 @@ class RedfishUtils(object):
         fan_results = []
         key = "Thermal"
         # Get these entries, but does not fail if not found
-        properties = ['FanName', 'Reading', 'Status']
+        properties = ['FanName', 'Reading', 'ReadingUnits', 'Status']
 
         # Go through list
         for chassis_uri in self.chassis_uri_list:
-            fan = {}
             response = self.get_request(self.root_uri + chassis_uri)
             if response['ret'] is False:
                 return response
@@ -783,12 +760,12 @@ class RedfishUtils(object):
                 data = response['data']
 
                 for device in data[u'Fans']:
+                    fan = {}
                     for property in properties:
                         if property in device:
                             fan[property] = device[property]
-
                     fan_results.append(fan)
-                result["entries"] = fan_results
+        result["entries"] = fan_results
         return result
 
     def get_cpu_inventory(self):

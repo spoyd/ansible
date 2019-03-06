@@ -4,8 +4,13 @@ from __future__ import absolute_import, print_function
 
 import errno
 import os
-import resource
 import sys
+
+# This import should occur as early as possible.
+# It must occur before subprocess has been imported anywhere in the current process.
+from lib.init import (
+    CURRENT_RLIMIT_NOFILE,
+)
 
 from lib.util import (
     ApplicationError,
@@ -14,6 +19,7 @@ from lib.util import (
     get_docker_completion,
     generate_pip_command,
     read_lines_without_comments,
+    MAXFD,
 )
 
 from lib.delegation import (
@@ -46,6 +52,7 @@ from lib.config import (
 from lib.env import (
     EnvConfig,
     command_env,
+    configure_timeout,
 )
 
 from lib.sanity import (
@@ -89,17 +96,10 @@ def main():
         display.color = config.color
         display.info_stderr = (isinstance(config, SanityConfig) and config.lint) or (isinstance(config, IntegrationConfig) and config.list_targets)
         check_startup()
+        configure_timeout(config)
 
-        # to achieve a consistent nofile ulimit, set to 16k here, this can affect performance in subprocess.Popen when
-        # being called with close_fds=True on Python (8x the time on some environments)
-        nofile_limit = 16 * 1024
-        current_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
-        new_limit = (nofile_limit, nofile_limit)
-        if current_limit > new_limit:
-            display.info('RLIMIT_NOFILE: %s -> %s' % (current_limit, new_limit), verbosity=2)
-            resource.setrlimit(resource.RLIMIT_NOFILE, (nofile_limit, nofile_limit))
-        else:
-            display.info('RLIMIT_NOFILE: %s' % (current_limit, ), verbosity=2)
+        display.info('RLIMIT_NOFILE: %s' % (CURRENT_RLIMIT_NOFILE,), verbosity=2)
+        display.info('MAXFD: %d' % MAXFD, verbosity=2)
 
         try:
             args.func(config)
@@ -291,6 +291,14 @@ def parse_args():
     integration.add_argument('--list-targets',
                              action='store_true',
                              help='list matching targets instead of running tests')
+
+    integration.add_argument('--no-temp-workdir',
+                             action='store_true',
+                             help='do not run tests from a temporary directory (use only for verifying broken tests)')
+
+    integration.add_argument('--no-temp-unicode',
+                             action='store_true',
+                             help='avoid unicode characters in temporary directory (use only for verifying broken tests)')
 
     subparsers = parser.add_subparsers(metavar='COMMAND')
     subparsers.required = True  # work-around for python 3 bug which makes subparsers optional
@@ -502,6 +510,11 @@ def parse_args():
     env.add_argument('--dump',
                      action='store_true',
                      help='dump environment to disk')
+
+    env.add_argument('--timeout',
+                     type=int,
+                     metavar='MINUTES',
+                     help='timeout for future ansible-test commands (0 clears)')
 
     if argcomplete:
         argcomplete.autocomplete(parser, always_complete_options=False, validator=lambda i, k: True)
